@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Анализатор цветовой палитры</title>
+<!-- Единственная внешняя библиотека: Color Thief — извлекает цвета из картинок -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/color-thief/2.4.0/color-thief.umd.js"></script>
+<style>
+  :root {
+    --bg: #121212;
+    --panel: #1c1c1c;
+    --panel-2: #232323;
+    --border: #2e2e2e;
+    --text: #e8e8e8;
+    --muted: #8a8a8a;
+    --accent: #6c7bff;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+    padding: 36px 20px 72px;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+
+  header { text-align: center; margin-bottom: 30px; }
+  header h1 { font-size: 24px; font-weight: 600; letter-spacing: 0.3px; }
+  header p { color: var(--muted); font-size: 14px; margin-top: 8px; }
+
+  /* Зона загрузки */
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 16px;
+    padding: 52px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s, transform .1s;
+    background: var(--panel);
+    user-select: none;
+  }
+  .dropzone:hover, .dropzone.drag {
+    border-color: var(--accent);
+    background: #1e2030;
+  }
+  .dropzone.drag { transform: scale(1.005); }
+  .dropzone .icon { font-size: 40px; opacity: .65; }
+  .dropzone .big { font-size: 16px; margin-top: 12px; }
+  .dropzone .small { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .dropzone.compact { padding: 26px 24px; }
+
+  /* Счётчик + превью */
+  .count-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 28px 0 14px;
+  }
+  .count-row h2 { font-size: 15px; font-weight: 600; }
+  .count-row .num { color: var(--muted); font-size: 14px; }
+  .clear-all {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 13px; text-decoration: underline; padding: 4px;
+  }
+  .clear-all:hover { color: var(--text); }
+
+  .previews {
+    display: flex; flex-wrap: wrap; gap: 14px;
+  }
+  .thumb {
+    position: relative;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    animation: fadeIn .3s ease both;
+  }
+  .thumb img { height: 150px; display: block; object-fit: cover; }
+  .thumb .remove {
+    position: absolute; top: 6px; right: 6px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: rgba(0,0,0,.6); color: #fff;
+    border: none; cursor: pointer;
+    font-size: 16px; line-height: 26px; text-align: center;
+    transition: background .15s;
+  }
+  .thumb .remove:hover { background: rgba(220,60,60,.9); }
+
+  /* Контролы */
+  .controls {
+    margin-top: 34px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  }
+  .controls label { font-size: 14px; white-space: nowrap; }
+  .controls .val { color: var(--accent); font-weight: 600; min-width: 22px; display: inline-block; text-align: center; }
+  .controls input[type=range] {
+    flex: 1; min-width: 180px; accent-color: var(--accent); height: 4px; cursor: pointer;
+  }
+
+  /* Палитра */
+  .palette-section { margin-top: 26px; }
+  .palette {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 14px;
+  }
+  .swatch { cursor: pointer; animation: rise .35s ease both; }
+  .swatch .color {
+    height: 132px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    transition: transform .14s, box-shadow .14s;
+    position: relative;
+  }
+  .swatch:hover .color { transform: translateY(-5px); box-shadow: 0 10px 24px rgba(0,0,0,.45); }
+  .swatch .hex {
+    text-align: center; margin-top: 10px;
+    font-size: 13px; font-family: "SF Mono", Consolas, monospace;
+    color: var(--muted); letter-spacing: 0.5px;
+  }
+
+  /* Кнопки под палитрой */
+  .actions { margin-top: 24px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn {
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 9px; padding: 11px 20px; font-size: 14px; cursor: pointer;
+    transition: opacity .18s, transform .1s;
+  }
+  .btn:hover { opacity: .9; }
+  .btn:active { transform: translateY(1px); }
+  .btn.secondary { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
+
+  /* Тост */
+  .toast {
+    position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%) translateY(20px);
+    background: #2a2a2a; color: #fff; border: 1px solid var(--border);
+    padding: 11px 22px; border-radius: 10px; font-size: 14px;
+    opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+    box-shadow: 0 8px 30px rgba(0,0,0,.5); z-index: 50;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  .hidden { display: none !important; }
+
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Анализатор цветовой палитры</h1>
+    <p>Загрузите референсы — получите общую палитру подборки</p>
+  </header>
+
+  <div class="dropzone" id="dropzone">
+    <div class="icon">⬆</div>
+    <div class="big">Перетащите изображения сюда или нажмите для выбора</div>
+    <div class="small">Можно загрузить несколько картинок</div>
+    <input type="file" id="fileInput" accept="image/*" multiple class="hidden">
+  </div>
+
+  <!-- Блок с картинками -->
+  <div id="imagesBlock" class="hidden">
+    <div class="count-row">
+      <h2>Загруженные изображения</h2>
+      <div>
+        <span class="num" id="counter">0</span>
+        <button class="clear-all" id="clearAll">Очистить всё</button>
+      </div>
+    </div>
+    <div class="previews" id="previews"></div>
+  </div>
+
+  <!-- Контролы (ползунок) -->
+  <div class="controls hidden" id="controls">
+    <label for="countSlider">Количество цветов</label>
+    <input type="range" id="countSlider" min="4" max="12" value="8" step="1">
+    <span class="val" id="countVal">8</span>
+  </div>
+
+  <!-- Палитра -->
+  <div class="palette-section hidden" id="paletteSection">
+    <div class="palette" id="palette"></div>
+    <div class="actions">
+      <button class="btn secondary" id="copyAllBtn">Скопировать все цвета</button>
+      <button class="btn" id="downloadBtn">Скачать палитру</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast">Скопировано</div>
+
+<script>
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const previews = document.getElementById('previews');
+  const imagesBlock = document.getElementById('imagesBlock');
+  const counter = document.getElementById('counter');
+  const clearAll = document.getElementById('clearAll');
+  const controls = document.getElementById('controls');
+  const countSlider = document.getElementById('countSlider');
+  const countVal = document.getElementById('countVal');
+  const paletteSection = document.getElementById('paletteSection');
+  const paletteEl = document.getElementById('palette');
+  const copyAllBtn = document.getElementById('copyAllBtn');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const toast = document.getElementById('toast');
+
+  // Каждая картинка: { id, url, img }
+  let items = [];
+  let nextId = 1;
+  let currentPalette = [];
+
+  // --- Клик по зоне -> выбор файлов ---
+  dropzone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', e => { handleFiles(e.target.files); fileInput.value = ''; });
+
+  // --- Drag and drop ---
+  ['dragover', 'dragenter'].forEach(ev =>
+    dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('drag'); }));
+  ['dragleave', 'dragend'].forEach(ev =>
+    dropzone.addEventListener(ev, () => dropzone.classList.remove('drag')));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('drag');
+    handleFiles(e.dataTransfer.files);
+  });
+
+  // --- Загрузка файлов ---
+  function handleFiles(files) {
+    const images = [...files].filter(f => f.type.startsWith('image/'));
+    if (!images.length) return;
+    let pending = images.length;
+    images.forEach(file => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        items.push({ id: nextId++, url, img });
+        renderThumbs();
+        if (--pending === 0) { updateUI(); buildPalette(); }
+      };
+      img.onerror = () => { if (--pending === 0) { updateUI(); buildPalette(); } };
+      img.src = url;
+    });
+  }
+
+  // --- Превью с крестиком ---
+  function renderThumbs() {
+    previews.innerHTML = '';
+    items.forEach(it => {
+      const div = document.createElement('div');
+      div.className = 'thumb';
+      div.innerHTML = `<img src="${it.url}" alt=""><button class="remove" title="Удалить">×</button>`;
+      div.querySelector('.remove').addEventListener('click', () => removeItem(it.id));
+      previews.appendChild(div);
+    });
+    counter.textContent = items.length
+      ? `${items.length} ${plural(items.length)}`
+      : '0';
+  }
+
+  function plural(n) {
+    const a = n % 10, b = n % 100;
+    if (a === 1 && b !== 11) return 'изображение';
+    if (a >= 2 && a <= 4 && (b < 10 || b >= 20)) return 'изображения';
+    return 'изображений';
+  }
+
+  function removeItem(id) {
+    const it = items.find(x => x.id === id);
+    if (it) URL.revokeObjectURL(it.url);
+    items = items.filter(x => x.id !== id);
+    renderThumbs();
+    updateUI();
+    buildPalette();
+  }
+
+  clearAll.addEventListener('click', () => {
+    items.forEach(it => URL.revokeObjectURL(it.url));
+    items = [];
+    renderThumbs();
+    updateUI();
+    buildPalette();
+  });
+
+  // --- Показ/скрытие блоков (пустое состояние) ---
+  function updateUI() {
+    const has = items.length > 0;
+    imagesBlock.classList.toggle('hidden', !has);
+    controls.classList.toggle('hidden', !has);
+    paletteSection.classList.toggle('hidden', !has);
+    dropzone.classList.toggle('compact', has);
+  }
+
+  // --- Ползунок ---
+  countSlider.addEventListener('input', () => {
+    countVal.textContent = countSlider.value;
+    buildPalette();
+  });
+
+  // --- Извлечение общей палитры из всех картинок ---
+  function buildPalette() {
+    if (!items.length) { currentPalette = []; paletteEl.innerHTML = ''; return; }
+    const want = parseInt(countSlider.value, 10);
+    const thief = new ColorThief();
+    const counts = new Map(); // hex -> частота
+
+    items.forEach(it => {
+      let colors = [];
+      try { colors = thief.getPalette(it.img, 12) || []; } catch (e) { colors = []; }
+      colors.forEach(c => {
+        const hex = rgbToHex(c[0], c[1], c[2]);
+        counts.set(hex, (counts.get(hex) || 0) + 1);
+      });
+    });
+
+    // топ по частоте; добиваем при нехватке тем, что есть
+    currentPalette = [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(e => e[0])
+      .slice(0, want);
+
+    renderPalette();
+  }
+
+  function renderPalette() {
+    paletteEl.innerHTML = '';
+    currentPalette.forEach((hex, i) => {
+      const sw = document.createElement('div');
+      sw.className = 'swatch';
+      sw.style.animationDelay = (i * 0.04) + 's';
+      sw.innerHTML = `<div class="color" style="background:${hex}"></div>
+                      <div class="hex">${hex.toUpperCase()}</div>`;
+      sw.addEventListener('click', () => copyText(hex.toUpperCase(), 'Скопировано ' + hex.toUpperCase()));
+      paletteEl.appendChild(sw);
+    });
+  }
+
+  // --- Копирование ---
+  copyAllBtn.addEventListener('click', () => {
+    if (!currentPalette.length) return;
+    const all = currentPalette.map(h => h.toUpperCase()).join(', ');
+    copyText(all, 'Все цвета скопированы');
+  });
+
+  function copyText(text, msg) {
+    const ok = () => showToast(msg);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(ok).catch(() => fallbackCopy(text, ok));
+    } else {
+      fallbackCopy(text, ok);
+    }
+  }
+  function fallbackCopy(text, done) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+    done();
+  }
+
+  let toastTimer;
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 1400);
+  }
+
+  // --- Скачивание PNG ---
+  downloadBtn.addEventListener('click', () => {
+    if (!currentPalette.length) return;
+    const n = currentPalette.length;
+    const cw = 200, ch = 260, pad = 30, labelH = 46, gap = 16;
+    const w = pad * 2 + n * cw + (n - 1) * gap;
+    const h = pad * 2 + ch + labelH;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = '#121212';
+    ctx.fillRect(0, 0, w, h);
+
+    currentPalette.forEach((hex, i) => {
+      const x = pad + i * (cw + gap);
+      // плашка со скруглением
+      roundRect(ctx, x, pad, cw, ch, 12);
+      ctx.fillStyle = hex;
+      ctx.fill();
+      // подпись
+      ctx.fillStyle = '#e8e8e8';
+      ctx.font = '22px Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(hex.toUpperCase(), x + cw / 2, pad + ch + labelH / 2 + 4);
+    });
+
+    const link = document.createElement('a');
+    link.download = 'palette.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+    showToast('Палитра сохранена');
+  });
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function rgbToHex(r, g, b) {
+    return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+  }
+
+  // Старт: пустое состояние
+  updateUI();
+</script>
+</body>
+</html>
