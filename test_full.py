@@ -60,6 +60,18 @@ def check(name, cond, extra=""):
 
 HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
+def rgb(hex_):
+    hex_ = hex_.strip().lstrip("#")
+    return int(hex_[0:2], 16), int(hex_[2:4], 16), int(hex_[4:6], 16)
+
+def is_green(hex_):
+    r, g, b = rgb(hex_)
+    return g >= r and g >= b and g > 80
+
+def is_warm(hex_):
+    r, g, b = rgb(hex_)
+    return r >= g and r >= b and r > 110 and r > b + 20
+
 # ======================================================================
 httpd = start_server()
 try:
@@ -260,7 +272,64 @@ try:
               page.locator("#palette .swatch").count() > 0)
 
         # --------------------------------------------------------------
-        stage("14. Стабильность (отсутствие ошибок в консоли за весь прогон)")
+        def palette_hexes():
+            return [h.strip().upper() for h in page.locator("#palette .hex").all_inner_texts()]
+
+        stage("14. Общая палитра РЕАЛЬНО агрегирует подборку (главный баг)")
+        # Логика: общая палитра должна меняться при добавлении картинок и
+        # содержать цвета из РАЗНЫХ изображений, а не только из первого.
+        page.locator("#clearAll").click()
+        time.sleep(0.3)
+        page.set_input_files("#fileInput", img("forest.png"))
+        page.wait_for_function("document.querySelectorAll('#palette .swatch').length > 0", timeout=10000)
+        time.sleep(0.3)
+        p1 = palette_hexes()
+        check("Палитра одной картинки (forest) содержит зелёный",
+              any(is_green(h) for h in p1), f"({p1})")
+        # Добавляем тёплую картинку
+        page.set_input_files("#fileInput", img("sunset.png"))
+        page.wait_for_function("document.querySelectorAll('.thumb').length === 2", timeout=10000)
+        time.sleep(0.4)
+        p2 = palette_hexes()
+        check("Добавление картинки ИЗМЕНИЛО общую палитру", p2 != p1, f"(было {p1}\n   стало {p2})")
+        check("Общая палитра содержит зелёный из forest", any(is_green(h) for h in p2), f"({p2})")
+        check("Общая палитра содержит тёплый из sunset", any(is_warm(h) for h in p2), f"({p2})")
+
+        # --------------------------------------------------------------
+        stage("15. Режим «По картинкам» (переключение и выбор изображения)")
+        # Состояние: [forest, sunset], режим combined
+        page.locator('#modeToggle .seg-btn[data-mode="single"]').click()
+        time.sleep(0.3)
+        check("Кнопка «По картинкам» активна",
+              "active" in (page.locator('#modeToggle .seg-btn[data-mode="single"]').get_attribute("class") or ""))
+        check("Подсказка сменилась на выбор изображения",
+              "ыберите" in page.locator("#modeHint").inner_text(), f"({page.locator('#modeHint').inner_text()!r})")
+        check("Превью стали выбираемыми (.selectable)",
+              page.locator(".thumb.selectable").count() == 2)
+        check("Первая картинка выбрана по умолчанию (.selected)",
+              page.locator(".thumb.selected").count() == 1)
+        single_first = palette_hexes()
+        check("Палитра выбранной (forest) содержит зелёный", any(is_green(h) for h in single_first), f"({single_first})")
+        # Выбираем вторую картинку (sunset)
+        page.locator(".thumb").nth(1).click()
+        time.sleep(0.3)
+        single_second = palette_hexes()
+        check("Выбор другой картинки сменил палитру", single_second != single_first,
+              f"(было {single_first}\n   стало {single_second})")
+        check("Палитра второй (sunset) содержит тёплый", any(is_warm(h) for h in single_second), f"({single_second})")
+        check("Выделение переехало на вторую картинку",
+              "selected" in (page.locator(".thumb").nth(1).get_attribute("class") or "")
+              and "selected" not in (page.locator(".thumb").nth(0).get_attribute("class") or ""))
+        # Возврат в общий режим
+        page.locator('#modeToggle .seg-btn[data-mode="combined"]').click()
+        time.sleep(0.3)
+        check("Возврат в режим «Общая палитра» работает",
+              "active" in (page.locator('#modeToggle .seg-btn[data-mode="combined"]').get_attribute("class") or ""))
+        check("В общем режиме превью больше не выбираемы",
+              page.locator(".thumb.selectable").count() == 0)
+
+        # --------------------------------------------------------------
+        stage("16. Стабильность (отсутствие ошибок в консоли за весь прогон)")
         real_errors = [e for e in errors if "favicon" not in e.lower()]
         check("За весь сценарий нет ошибок в консоли/страницы",
               len(real_errors) == 0, str(real_errors[:3]))
